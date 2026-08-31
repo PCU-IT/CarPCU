@@ -1,0 +1,258 @@
+
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>บันทึกการใช้รถ</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Sarabun", sans-serif;
+    background: #f4f5f7;
+    margin: 0;
+    padding: 20px;
+    color: #222;
+  }
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 420px;
+    margin: 0 auto;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+  h2 { margin-top: 0; font-size: 20px; }
+  .user-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .user-box img { width: 44px; height: 44px; border-radius: 50%; }
+  .info-row {
+    background: #f0f4ff;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+  .info-row b { color: #1a56db; }
+  label { font-size: 14px; font-weight: 600; display: block; margin-bottom: 6px; }
+  input[type=number] {
+    width: 100%;
+    padding: 14px;
+    font-size: 20px;
+    border: 2px solid #ddd;
+    border-radius: 10px;
+    margin-bottom: 16px;
+  }
+  button {
+    width: 100%;
+    padding: 15px;
+    font-size: 16px;
+    font-weight: 700;
+    border: none;
+    border-radius: 10px;
+    background: #06c755;
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled { background: #aaa; }
+  .warn {
+    background: #fff3cd;
+    color: #7a5b00;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .err {
+    background: #fde2e2;
+    color: #a30000;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .center { text-align: center; padding: 40px 0; color: #888; }
+  .success { text-align: center; padding: 20px 0; }
+  .success .big { font-size: 40px; }
+</style>
+</head>
+<body>
+
+<div class="card" id="app">
+  <div class="center" id="loading">กำลังโหลดข้อมูล...</div>
+</div>
+
+<script>
+// ===== ตั้งค่า =====
+const LIFF_ID = "YOUR_LIFF_ID"; // เปลี่ยนเป็น LIFF ID ของคุณ
+const BACKEND_URL = "YOUR_APPS_SCRIPT_WEB_APP_URL"; // เปลี่ยนเป็น URL ของ Apps Script ที่ deploy แล้ว
+
+// อ่านทะเบียนรถจาก URL เช่น liff.line.me/xxxx?car=กข1234
+const urlParams = new URLSearchParams(window.location.search);
+const carId = urlParams.get('car') || 'ไม่ระบุ';
+
+let currentUser = null;
+let tripStatus = null; // ข้อมูลสถานะทริปที่ backend ส่งกลับมา
+
+async function init() {
+  await liff.init({ liffId: LIFF_ID });
+  if (!liff.isLoggedIn()) {
+    liff.login();
+    return;
+  }
+  const profile = await liff.getProfile();
+  currentUser = {
+    userId: profile.userId,
+    displayName: profile.displayName,
+    pictureUrl: profile.pictureUrl
+  };
+  await loadStatus();
+}
+
+// ดึงสถานะปัจจุบันของรถคันนี้จาก backend
+async function loadStatus() {
+  try {
+    const res = await fetch(`${BACKEND_URL}?action=getStatus&car=${encodeURIComponent(carId)}`);
+    const data = await res.json();
+    tripStatus = data;
+    render();
+  } catch (e) {
+    document.getElementById('app').innerHTML = `<div class="err">โหลดข้อมูลไม่สำเร็จ กรุณาลองใหม่</div>`;
+  }
+}
+
+function render() {
+  const app = document.getElementById('app');
+
+  const userBox = `
+    <div class="user-box">
+      <img src="${currentUser.pictureUrl}" />
+      <div>
+        <div style="font-weight:700;">${currentUser.displayName}</div>
+        <div style="font-size:12px;color:#888;">รถ: ${carId}</div>
+      </div>
+    </div>
+  `;
+
+  // กรณีที่ 1: ไม่มีทริปค้าง -> โหมด "เริ่มทริป"
+  if (!tripStatus.openTrip) {
+    app.innerHTML = `
+      ${userBox}
+      <h2>เริ่มใช้รถ</h2>
+      <div class="info-row">เลขไมล์ล่าสุด: <b>${tripStatus.lastMileage.toLocaleString()} กม.</b></div>
+      <label>เลขไมล์ตอนออกรถ (ถ้าตรงกับด้านบนไม่ต้องแก้)</label>
+      <input type="number" id="startMileage" value="${tripStatus.lastMileage}" />
+      <button onclick="startTrip()">เริ่มใช้รถ</button>
+    `;
+    return;
+  }
+
+  // กรณีที่ 2: มีทริปค้างอยู่ของ "คนอื่น" -> เตือน
+  if (tripStatus.openTrip.userId !== currentUser.userId) {
+    app.innerHTML = `
+      ${userBox}
+      <div class="warn">
+        รถคันนี้กำลังถูกใช้งานโดย <b>${tripStatus.openTrip.userName}</b><br/>
+        ตั้งแต่เวลา ${tripStatus.openTrip.startTime}<br/>
+        ยังไม่ได้บันทึกจบทริป กรุณาตรวจสอบก่อน
+      </div>
+      <button onclick="loadStatus()">รีเฟรชสถานะ</button>
+    `;
+    return;
+  }
+
+  // กรณีที่ 3: มีทริปค้างของ "ตัวเอง" -> โหมด "จบทริป"
+  app.innerHTML = `
+    ${userBox}
+    <h2>จบการใช้รถ</h2>
+    <div class="info-row">ออกจากเลขไมล์: <b>${tripStatus.openTrip.startMileage.toLocaleString()} กม.</b><br/>เวลาออก: ${tripStatus.openTrip.startTime}</div>
+    <label>เลขไมล์ตอนนี้ (ตอนกลับ)</label>
+    <input type="number" id="endMileage" placeholder="กรอกเลขไมล์ปัจจุบัน" oninput="previewDistance()" />
+    <div class="info-row" id="distancePreview" style="display:none;"></div>
+    <div id="errBox"></div>
+    <button onclick="endTrip()">จบการใช้รถ</button>
+  `;
+}
+
+function previewDistance() {
+  const endVal = parseFloat(document.getElementById('endMileage').value);
+  const box = document.getElementById('distancePreview');
+  if (!endVal) { box.style.display = 'none'; return; }
+  const dist = endVal - tripStatus.openTrip.startMileage;
+  box.style.display = 'block';
+  box.innerHTML = dist >= 0
+    ? `ระยะทางที่วิ่ง: <b>${dist.toLocaleString()} กม.</b>`
+    : `<span style="color:#a30000;">เลขไมล์ต้องมากกว่าตอนเริ่ม (${tripStatus.openTrip.startMileage.toLocaleString()})</span>`;
+}
+
+async function startTrip() {
+  const startMileage = parseFloat(document.getElementById('startMileage').value);
+  if (!startMileage || startMileage < tripStatus.lastMileage) {
+    alert('กรุณากรอกเลขไมล์ให้ถูกต้อง (ต้องไม่น้อยกว่าเลขไมล์ล่าสุด)');
+    return;
+  }
+  await postAction({
+    action: 'startTrip',
+    car: carId,
+    userId: currentUser.userId,
+    userName: currentUser.displayName,
+    startMileage
+  });
+  showSuccess('เริ่มใช้รถแล้ว', `เลขไมล์เริ่ม: ${startMileage.toLocaleString()} กม.`);
+}
+
+async function endTrip() {
+  const endMileage = parseFloat(document.getElementById('endMileage').value);
+  const errBox = document.getElementById('errBox');
+  errBox.innerHTML = '';
+
+  if (!endMileage) {
+    errBox.innerHTML = `<div class="err">กรุณากรอกเลขไมล์</div>`;
+    return;
+  }
+  if (endMileage < tripStatus.openTrip.startMileage) {
+    errBox.innerHTML = `<div class="err">เลขไมล์ตอนจบต้องมากกว่าตอนเริ่ม (${tripStatus.openTrip.startMileage.toLocaleString()})</div>`;
+    return;
+  }
+
+  await postAction({
+    action: 'endTrip',
+    car: carId,
+    userId: currentUser.userId,
+    rowId: tripStatus.openTrip.rowId,
+    endMileage
+  });
+
+  const dist = endMileage - tripStatus.openTrip.startMileage;
+  showSuccess('จบการใช้รถแล้ว', `วิ่งไปทั้งหมด ${dist.toLocaleString()} กม.`);
+}
+
+async function postAction(payload) {
+  await fetch(BACKEND_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' }, // ใช้ text/plain เพื่อเลี่ยงปัญหา CORS preflight กับ Apps Script
+    body: JSON.stringify(payload)
+  });
+}
+
+function showSuccess(title, subtitle) {
+  document.getElementById('app').innerHTML = `
+    <div class="success">
+      <div class="big">✅</div>
+      <h2>${title}</h2>
+      <div style="color:#555;">${subtitle}</div>
+      <div style="margin-top:20px;font-size:13px;color:#999;">ปิดหน้าต่างนี้ได้เลย</div>
+    </div>
+  `;
+  setTimeout(() => { try { liff.closeWindow(); } catch(e){} }, 2500);
+}
+
+init();
+</script>
+</body>
+</html>
